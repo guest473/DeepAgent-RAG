@@ -5,18 +5,26 @@
 ## 核心特性
 
 - **知识库优先的 RAG 问答**：主 Agent 先做意图识别，寒暄直接回应，其余交由检索子代理从 Milvus 取回 Top-K 文档块；回答严格基于检索结果，「检索无果」与「检索故障」以不同固定文案告知，不以模型自身知识补全。
+
 - **可选联网搜索**：界面可开关 Tavily 联网搜索。
+
 - **流式对话 + 持久化**：`POST /api/chat/stream` 以 SSE 增量输出；上下文按 `thread_id` 从 PostgreSQL 检查点恢复，消息与会话同时落库，超长对话自动摘要压缩。
+
 - **账户与限流**：Argon2id 密码哈希 + JWT 鉴权，管理员 / 普通用户两种角色；登录、注册、对话均有滑动窗口限流。
+
 - **知识库管理**：`.txt` / `.pdf` / `.docx` 按内容（MD5）去重入库，支持上传、删除与构建索引；上传即切分入库并当场校验，失败则重建复验。系统维护 `md5.txt`、`knowledge/`、Milvus 三份数据，判定基准是内容而非路径（内容相同的文件只入库一次、共享一组向量），后台每 `health_check_interval_hours` 小时核对并自动修复记录丢失、文件丢失、向量丢失三类异常。
+
 - **多进程安全**：以 PostgreSQL 咨询锁实现索引写互斥与定时任务选主。
 
 ## 技术栈
 
-- **Agent 与模型**：框架用 deepagents + langchain（底层执行引擎均为 LangGraph）；模型经 DashScope 的 OpenAI 兼容接口调用
-- **检索与解析**：Milvus（langchain-milvus / pymilvus）+ DashScope `qwen3.7-text-embedding`；pypdf / docx2txt 解析文档；Tavily 联网搜索
-- **服务与存储**：FastAPI + Uvicorn；PostgreSQL（业务表 + LangGraph 检查点 + 咨询锁）
-- **前端与部署**：Vue 3 + Vite + TypeScript；Nginx
+- **Agent 与模型**：框架用 deepagents + langchain（底层执行引擎均为 LangGraph）；模型经 DashScope 的 OpenAI 兼容接口调用。
+
+- **检索与解析**：Milvus（langchain-milvus / pymilvus）+ DashScope `qwen3.7-text-embedding`；pypdf / docx2txt 解析文档；Tavily 联网搜索。
+
+- **服务与存储**：FastAPI + Uvicorn；PostgreSQL（业务表 + LangGraph 检查点 + 咨询锁）。
+
+- **前端与部署**：Vue 3 + Vite + TypeScript；Nginx。
 
 ## 目录结构
 
@@ -28,9 +36,11 @@ DeepAgent-RAG/
 ├── rag/                # 检索子代理、Milvus 封装与入库闭环、索引健康
 ├── utils/              # 配置 / 提示词 / 文件 / 路径 / PG 咨询锁
 ├── config/             # agent.yaml、vector_db.yaml
+├── prompts_data/       # 主 / 摘要提示词（main_prompt.txt、summary_prompt.txt）
 ├── knowledge/          # 知识库源文件（自动创建，已忽略）
 ├── frontend-chat/      # Vue 3 + Vite 前端
 ├── deploy/             # Nginx 配置
+├── requirements.txt    # Python 依赖
 ├── md5.txt             # 入库记录（运行时生成，已忽略）
 └── .env                # 环境变量（需自行创建，勿提交）
 ```
@@ -99,51 +109,81 @@ UPDATE users SET role = 'admin' WHERE username = 'your-username';
 
 管理员点左下角齿轮菜单进入「管理知识库」，上传 `.txt` / `.pdf` / `.docx`（上传即入库）后即可回对话页提问，并按需开启联网搜索。
 
+### 4. 部署上线（可选）
+
+`deploy/nginx-windows.conf` 提供前端静态托管 + `/api` 反向代理，已处理 SSE 转发的关键项（关闭缓冲与压缩、延长超时）；本机不配 HTTPS，TLS 交由外层 Cloudflare / 隧道终结；配置内已内置 CSP 等安全响应头，生产环境只需在该层启用 HTTPS（可再补 HSTS）。使用前把 `root` 改为本机 `frontend-chat/dist` 的实际路径。启动后端请加 `-u`（或设 `PYTHONUNBUFFERED=1`），否则非 TTY 下 stdout 块缓冲会让日志成批延迟输出；需要常驻时可注册为系统服务（如 `nssm`）。
+
 ## API 一览
 
 除「公开」外均需带 `Authorization: Bearer <token>`。
 
-| 权限 | 接口 |
-| --- | --- |
-| 公开 | `GET /api/health`；`POST /api/auth/register`；`POST /api/auth/login`（返回 JWT） |
-| 登录 | `GET /api/auth/me`；`GET` / `POST /api/conversations`（列表 / 创建，id 由服务端生成）；`PATCH` / `DELETE /api/conversations/{id}`；`POST /api/conversations/{id}/messages`；`POST /api/chat/stream`（SSE，事件 `content` / `done` / `error`） |
-| 管理员 | `GET /api/files`、`POST /api/files/upload`、`DELETE /api/files/{filename}`；`POST /api/vector/build`；`GET /api/index/health`（`?refresh=1` 立即检查）、`POST /api/index/health/repair` |
+| 权限  | 接口                                                                                                                                                                                                                      |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 公开  | `GET /api/health`；`POST /api/auth/register`；`POST /api/auth/login`（返回 JWT）                                                                                                                                              |
+| 登录  | `GET /api/auth/me`；`GET` / `POST /api/conversations`（列表 / 创建，id 由服务端生成）；`PATCH` / `DELETE /api/conversations/{id}`；`POST /api/conversations/{id}/messages`；`POST /api/chat/stream`（SSE，事件 `content` / `done` / `error`） |
+| 管理员 | `GET /api/files`、`POST /api/files/upload`、`DELETE /api/files/{filename}`；`POST /api/vector/build`；`GET /api/index/health`（`?refresh=1` 立即检查）、`POST /api/index/health/repair`                                            |
 
 ## 配置说明
 
-`config/agent.yaml`：主 Agent（`main_agent_model*`）与 RAG 子代理（`rag_summary_model*`）可分别配置 `model` / `provider` / `base_url`，后者可替换为任意 OpenAI 兼容服务。
+`config/agent.yaml`：主 Agent（`main_agent_model*`）与 RAG 子代理（`rag_summary_model*`）可分别配置模型名、`provider` 与 `base_url`，两者都能指向任意 OpenAI 兼容服务。
 
-`config/vector_db.yaml`：Milvus 地址与连接池（`milvus_uri` / `pool_size`）；向量化与切片（`embedding_model` / `chunk_size: 500` / `chunk_overlap: 50` / `separators`）；检索条数 `k: 3`；知识库目录与类型（`knowledge_dir` / `allowed_types`）；自检间隔 `health_check_interval_hours: 6`（下限 10 分钟）与自愈轮数 `health_auto_repair_max_rounds: 3`。
+`config/vector_db.yaml`：Milvus 集合与连接（`collection_name` / `milvus_uri` / `pool_size`）；向量化与切片（`embedding_model` / `chunk_size: 500` / `chunk_overlap: 50` / `separators`）；检索条数 `k: 3`；知识库目录与类型（`knowledge_dir` / `allowed_types`）；自检间隔 `health_check_interval_hours: 6`（下限 10 分钟）与自愈轮数 `health_auto_repair_max_rounds: 3`。
 
 常用环境变量：
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `HOST` / `PORT` | `0.0.0.0` / `8000` | 后端监听地址 |
-| `UVICORN_WORKERS` | `1` | 工作进程数 |
-| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | 信任的代理地址，用于取真实客户端 IP |
-| `MAX_UPLOAD_MB` | `50` | 单文件上传上限，需与 Nginx `client_max_body_size` 对齐 |
-| `PG_POOL_MIN` / `PG_POOL_MAX`、`PG_CHECKPOINT_POOL_*` | `2` / `20` | 业务与检查点连接池 |
-| `CHAT_*` | `30`/`60`、`3`、`8000` | 对话限流（`CHAT_RATE_LIMIT` / `CHAT_RATE_WINDOW_SECONDS`）、单用户并发上限（`MAX_CONCURRENT_CHAT_PER_USER`）、单条消息长度（`CHAT_MESSAGE_MAX_CHARS`） |
-| `INDEX_WRITE_LOCK_TIMEOUT_SECONDS` | `300` | 等待索引写锁上限，超时返回 503 |
-| `LOGIN_*` / `REGISTER_*` | `10`/`60s`、`100`/`60s`、`5`/`900s`、`5`/`3600s` | 登录三层限流（账号 / IP / 单 IP×单账号）与注册限流 |
+| 变量                                                   | 默认值                                           | 说明                                                                                                                            |
+| ---------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `HOST` / `PORT`                                      | `0.0.0.0` / `8000`                            | 后端监听地址                                                                                                                        |
+| `UVICORN_WORKERS`                                    | `1`                                           | 工作进程数                                                                                                                         |
+| `THREADPOOL_SIZE`                                    | `200`                                         | 线程池上限，每个活跃对话流约占用 1 个线程，应不小于目标并发流数                                                                                           |
+| `FORWARDED_ALLOW_IPS`                                | `127.0.0.1`                                   | 信任的代理地址，用于取真实客户端 IP                                                                                                           |
+| `ENABLE_API_DOCS`                                    | `false`                                       | 是否开放 `/docs`、`/redoc` 与 `/openapi.json`                                                                                        |
+| `MAX_UPLOAD_MB`                                      | `50`                                          | 单文件上传上限，需与 Nginx `client_max_body_size` 对齐                                                                                    |
+| `PG_POOL_MIN` / `PG_POOL_MAX`、`PG_CHECKPOINT_POOL_*` | `2` / `20`                                    | 业务与检查点连接池                                                                                                                     |
+| `CHAT_*`                                             | `30`/`60`、`3`、`8000`                          | 对话限流（`CHAT_RATE_LIMIT` / `CHAT_RATE_WINDOW_SECONDS`）、单用户并发上限（`MAX_CONCURRENT_CHAT_PER_USER`）、单条消息长度（`CHAT_MESSAGE_MAX_CHARS`） |
+| `INDEX_WRITE_LOCK_TIMEOUT_SECONDS`                   | `300`                                         | 等待索引写锁上限，超时返回 503                                                                                                             |
+| `LOGIN_*` / `REGISTER_*`                             | `10`/`60s`、`100`/`60s`、`5`/`900s`、`5`/`3600s` | 登录三层限流（账号 / IP / 单 IP×单账号）与注册限流                                                                                               |
 
 > 多 worker / 多实例时，`workers × (PG_POOL_MAX + PG_CHECKPOINT_POOL_MAX)` 不得超过 PG 的 `max_connections`。
 
-## 部署与安全
+## 知识库一致性
 
-`deploy/nginx-windows.conf` 提供前端静态托管 + `/api` 反向代理，已处理 SSE 转发的关键项（关闭缓冲与压缩、延长超时）；本机不配 HTTPS，TLS 交由外层 Cloudflare / 隧道终结，生产环境应由它启用 HTTPS 与安全响应头。使用前把 `root` 改为本机 `frontend-chat/dist` 的实际路径。启动后端请加 `-u`（或设 `PYTHONUNBUFFERED=1`），否则非 TTY 下 stdout 块缓冲会让日志成批延迟输出；需要常驻时可注册为系统服务（如 `nssm`）。
+知识库由三份数据构成：`knowledge/` 下的源文件、`md5.txt` 中的入库记录（一行一个文件内容 MD5）、Milvus 中的向量（`source` 元数据即文件绝对路径）。一致性设计围绕三者展开。
+
+**以内容为准**：入库、判定与展示一律按内容 MD5 去重，基准是内容而非路径。同内容文件只切分入库一次、共享一组向量（向量挂在首个入库文件的 `source` 上）；只要该内容的任一副本在磁盘上且带向量，就视为「已入库」，与 `/api/files` 口径一致。
+
+**单文件入库闭环**：每个文件独立走「切分 → 写入向量 → 写 `md5.txt` → 立即校验」，校验标准是该 `source` 在 Milvus 中的条数等于切块数且记录存在；不过关就删除该文件全部向量与记录后重建（最多 3 次），不依赖定时自检兜底。Milvus 默认 Bounded 一致性下新写入可能短暂不可见，计数不符时会先 `flush` 再复验一次，避免误判重建。`md5.txt` 采用「写临时文件 + 原子替换」，防止中途失败截断。
+
+**删除的补偿**：先删记录、再删向量；向量删除失败即回滚记录，失败后状态要么完整未删、要么「记录已删而向量还在」，两者都会落入自检的重建记录修复路径，而不会误把待删文件重新索引。若删掉的正是持有向量的那一份、磁盘上尚有同内容副本，会立即以副本重新入库，避免「显示已入库却检索不到」。
+
+**定时自检与自愈**：后台每 `health_check_interval_hours` 小时核对三类不一致并自动修复（新上传但从未构建的文件不算异常）：
+
+| 现象 | 判定 | 修复动作 |
+| --- | --- | --- |
+| 向量在、记录缺失 | `missing_md5_record` | 以 Milvus 为准重建 `md5.txt` |
+| 文件已删、向量残留 | `ghost_vectors` / `orphan_md5` | 清理残留向量、剔除孤立记录 |
+| 记录在、向量缺失 | `missing_vectors` | 剔除记录并按内容重新入库一个代表文件 |
+
+修复按固定顺序进行：先清理磁盘上已无对应文件的残留向量，再以「向量库与磁盘都还有」的内容为准重建入库记录，最后把「记录还在、向量却丢了」的内容重新入库。重索引失败会把记录补回，交由下一轮自检继续重试，避免停在「未入库」却永不重试。多 worker / 多实例下，索引写操作由 PG 咨询锁互斥，定时自检用会话级咨询锁选主，确保只由一个进程执行。
+
+## 安全说明
 
 - `.env` 含密钥，已在 `.gitignore` 中忽略，请勿提交；`JWT_SECRET` 变更会使所有已签发 token 失效。
+
 - Agent 默认使用内存态虚拟文件系统后端，无法读写本机文件或执行命令，可抵御文档 / 网页携带的提示注入；若改用 `FilesystemBackend` / `LocalShellBackend`，需重新评估相应风险。
 
 ## 故障排查
 
 - **启动即退出，提示「未配置 JWT_SECRET」**：该变量必填，按快速开始中的命令生成后填入 `.env`。
+
 - **返回 429**：登录 / 注册触发滑动窗口限流（`LOGIN_*` / `REGISTER_*`），对话则可能是频率限制或并发上限（`CHAT_*`）。若多用户互相误伤，说明后端未取到真实客户端 IP，检查 `FORWARDED_ALLOW_IPS` 与代理的 `set_real_ip_from` / `real_ip_header` 是否一致；否则等窗口结束或调大阈值。
+
 - **上传 / 删除 / 构建失败**：报「文件超过大小上限」是 `MAX_UPLOAD_MB` 与代理 `client_max_body_size` 不一致；报 503「索引正被其他操作占用」是等待索引写锁超过 `INDEX_WRITE_LOCK_TIMEOUT_SECONDS`，稍后重试；删除时提示「请确认文件未被其他程序占用」是文件被外部程序打开，向量与记录均未改动，关闭后重试。
-- **知识库提示异常**：「无法连接 Milvus」是服务未启动或 `milvus_uri` 配错；「未找到相关资料」是确实无结果或文件未入库（确认状态为「已入库」且块数大于 0，必要时点「补建向量库」或「手动修复」）；检索服务自身故障会提示「知识库检索服务暂时不可用」。
+
+- **知识库提示异常**：「无法连接 Milvus」是服务未启动或 `milvus_uri` 配错；「未找到相关资料」是确实无结果或文件未入库（先在文档列表确认该文件为「已入库」，再看「索引健康」的向量块数是否大于 0，必要时点「补建向量库」或「手动修复」）；检索服务自身故障会提示「知识库检索服务暂时不可用」。
+
 - **长时间无输出、随后整段答案一次性返回**：反向代理缓冲所致，`deploy/` 配置已关闭 `proxy_buffering` 与 `gzip` 并延长超时，自建代理需照此配置。
+
 - **启动日志警告 PG 连接需求逼近 `max_connections`**：调大 `max_connections`，或调小连接池上限。
 
 ## 许可证
