@@ -47,7 +47,7 @@ DeepAgent-RAG/
 
 ## 快速开始
 
-前置依赖：Python 3.12+、Node.js 18+、PostgreSQL、Milvus（默认 `http://localhost:19530`）。
+前置依赖：Python 3.12+、Node.js 18+、PostgreSQL，以及用于在本地拉起 Milvus 的 Docker（Milvus 默认地址 `http://localhost:19530`）。
 
 ### 1. 准备 PostgreSQL 与 Milvus
 
@@ -58,7 +58,7 @@ psql -U postgres -c "CREATE DATABASE deepagent_rag;"   # 按提示输入 postgre
 psql -U postgres -l                                    # 列出数据库，确认已创建
 ```
 
-**Milvus**：在任意目录（如 `C:\milvus`）下用 Docker 启动：
+**Milvus**：先建一个存放数据的目录（如 `C:\milvus`），在其中用 Docker 启动：
 
 ```powershell
 cd C:\milvus
@@ -70,11 +70,13 @@ docker compose up -d      # 旧版 Compose 为 docker-compose up -d；停止：d
 
 ### 2. 安装依赖并配置环境变量
 
+在项目根目录执行：
+
 ```powershell
 pip install -r requirements.txt
 ```
 
-在项目根目录创建 `.env`：
+然后在同目录创建 `.env`：
 
 ```ini
 DASHSCOPE_API_KEY=your-dashscope-key   # 供 embedding
@@ -93,15 +95,24 @@ LANGSMITH_ENDPOINT=https://apac.api.smith.langchain.com
 
 ### 3. 启动并开始使用
 
+后端和前端各开一个终端。
+
+**后端**（项目根目录）：
+
 ```powershell
 python api_server.py             # 默认 0.0.0.0:8000，启动时自动建表；健康检查 GET /api/health
-cd frontend-chat
-npm install
-npm run dev                      # 开发模式 http://localhost:5173（/api 已代理到 8000）
-npm run build                    # 生产构建，产物在 frontend-chat/dist
 ```
 
-打开前端注册登录：用户名 2–50 字符，密码至少 10 位且须含数字、字母与特殊符号。注册固定为普通用户，需要管理员时更新数据库再重新登录：
+**前端**（`frontend-chat` 目录）：
+
+```powershell
+npm install                      # 首次或依赖变动时执行
+npm run dev                      # 打开 http://localhost:5173（/api 已代理到 8000）
+```
+
+开发时用 `npm run dev` 就够了；要上线再执行 `npm run build`，产物在 `frontend-chat/dist`，用法见下一节。
+
+打开前端注册登录：用户名 2–50 字符，密码至少 10 位且须含数字、字母与特殊符号。注册一律是普通用户；需要管理员时按第 1 步的连接方式登录数据库、执行下面这条，再重新登录：
 
 ```sql
 UPDATE users SET role = 'admin' WHERE username = 'your-username';
@@ -111,7 +122,32 @@ UPDATE users SET role = 'admin' WHERE username = 'your-username';
 
 ### 4. 部署上线（可选）
 
-`deploy/nginx-windows.conf` 提供前端静态托管 + `/api` 反向代理，已处理 SSE 转发的关键项（关闭缓冲与压缩、延长超时）；本机不配 HTTPS，TLS 交由外层 Cloudflare / 隧道终结；配置内已内置 CSP 等安全响应头，生产环境只需在该层启用 HTTPS（可再补 HSTS）。使用前把 `root` 改为本机 `frontend-chat/dist` 的实际路径。启动后端请加 `-u`（或设 `PYTHONUNBUFFERED=1`），否则非 TTY 下 stdout 块缓冲会让日志成批延迟输出；需要常驻时可注册为系统服务（如 `nssm`）。
+生产部署用 Nginx：它托管前端静态文件，并把 `/api` 转发给后端。
+
+1. **构建前端**：进入 `frontend-chat` 执行 `npm run build`，产物在 `frontend-chat/dist`。
+2. **安装 Nginx**：下载 Nginx for Windows 的 zip（http://nginx.org/en/download.html），解压到如 `C:\nginx`。
+3. **套用配置**：用 `deploy/nginx-windows.conf` 覆盖 `C:\nginx\conf\nginx.conf`，并把里面的 `root` 改成第 1 步 `dist` 的实际路径（如 `C:/code/DeepAgent-RAG/frontend-chat/dist`）。
+4. **启动后端**：在项目根目录执行 `python -u api_server.py`。`-u` 不能省——非 TTY 下没有它，stdout 会块缓冲，日志要攒够一批才吐出来。
+5. **启动 Nginx**：在 `C:\nginx` 目录下执行：
+
+```powershell
+start nginx          # 启动
+nginx -s reload      # 改配置后重载
+nginx -s stop        # 停止
+```
+
+完成后打开 `http://localhost` 就是前端页面；后端健康检查仍是 `GET /api/health`。
+
+配置里已经替你做好的事：
+
+- **SSE 流式对话**：`/api` 已关闭缓冲与压缩、延长超时；否则会出现「长时间没反应、最后整段答案一次性蹦出来」。
+- **上传大小**：`client_max_body_size 50m` 已与后端 `MAX_UPLOAD_MB` 对齐。
+- **安全响应头**：CSP、`X-Frame-Options` 等已内置。
+- **真实客户端 IP**：默认只信任 `127.0.0.1`，让后端取到真实 IP 做限流。
+
+关于 HTTPS：该配置只监听 80、不带证书，适合本机或内网。要让公网访问，建议在前面套 Cloudflare 代理或 cloudflared 隧道来终结 TLS——走隧道时 `set_real_ip_from 127.0.0.1` 保持不变；改走 Cloudflare 代理（对端是 Cloudflare 边缘）时，需把它换成 Cloudflare 官方网段，才能正确解析 `CF-Connecting-IP`（该头可被伪造，切勿写成 `0.0.0.0/0`）。
+
+需要常驻运行时，可把后端注册为系统服务（如 `nssm`）。
 
 ## API 一览
 
@@ -176,11 +212,19 @@ UPDATE users SET role = 'admin' WHERE username = 'your-username';
 
 - **启动即退出，提示「未配置 JWT_SECRET」**：该变量必填，按快速开始中的命令生成后填入 `.env`。
 
-- **返回 429**：登录 / 注册触发滑动窗口限流（`LOGIN_*` / `REGISTER_*`），对话则可能是频率限制或并发上限（`CHAT_*`）。若多用户互相误伤，说明后端未取到真实客户端 IP，检查 `FORWARDED_ALLOW_IPS` 与代理的 `set_real_ip_from` / `real_ip_header` 是否一致；否则等窗口结束或调大阈值。
+- **接口返回 429**：触发了滑动窗口限流。登录 / 注册看 `LOGIN_*` / `REGISTER_*`，对话看 `CHAT_*`（频率或并发上限）。等窗口结束或调大阈值即可；若多用户互相误伤，多半是后端没取到真实客户端 IP，检查 `FORWARDED_ALLOW_IPS` 与代理的 `set_real_ip_from` / `real_ip_header` 是否一致。
 
-- **上传 / 删除 / 构建失败**：报「文件超过大小上限」是 `MAX_UPLOAD_MB` 与代理 `client_max_body_size` 不一致；报 503「索引正被其他操作占用」是等待索引写锁超过 `INDEX_WRITE_LOCK_TIMEOUT_SECONDS`，稍后重试；删除时提示「请确认文件未被其他程序占用」是文件被外部程序打开，向量与记录均未改动，关闭后重试。
+- **上传报「文件超过大小上限」**：`MAX_UPLOAD_MB` 与代理 `client_max_body_size` 不一致，把两处改成一样。
 
-- **知识库提示异常**：「无法连接 Milvus」是服务未启动或 `milvus_uri` 配错；「未找到相关资料」是确实无结果或文件未入库（先在文档列表确认该文件为「已入库」，再看「索引健康」的向量块数是否大于 0，必要时点「补建向量库」或「手动修复」）；检索服务自身故障会提示「知识库检索服务暂时不可用」。
+- **上传 / 删除 / 构建报 503「索引正被其他操作占用」**：等待索引写锁超过了 `INDEX_WRITE_LOCK_TIMEOUT_SECONDS`（默认 300 秒），说明别的进程正在做长操作，稍后重试。
+
+- **删除报「请确认文件未被其他程序占用」**：磁盘文件正被外部程序打开，此时向量与入库记录都还没动，关掉占用后重试即可。
+
+- **提示「无法连接 Milvus」**：Milvus 服务没启动，或 `milvus_uri` 配错。
+
+- **提示「未找到相关资料」**：确实没有相关内容，或者文件没入库。先在文档列表确认该文件为「已入库」，再看「索引健康」的向量块数是否大于 0；必要时点「补建向量库」或「手动修复」。
+
+- **提示「知识库检索服务暂时不可用」**：检索服务自身故障，跟「知识库没有资料」不是一回事，稍后重试。
 
 - **长时间无输出、随后整段答案一次性返回**：反向代理缓冲所致，`deploy/` 配置已关闭 `proxy_buffering` 与 `gzip` 并延长超时，自建代理需照此配置。
 
