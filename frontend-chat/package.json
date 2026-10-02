@@ -1,0 +1,23 @@
+{
+  "name": "deepagent-chat",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5173",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@types/dompurify": "^3.0.5",
+    "dompurify": "^3.4.13",
+    "marked": "^18.0.7",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.5",
+    "vue-tsc": "^2.2.0"
+  }
+}

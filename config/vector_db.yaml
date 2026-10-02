@@ -1,0 +1,26 @@
+collection_name: milvus
+embedding_model: qwen3.7-text-embedding
+#text-embedding-v4
+
+# Milvus 配置（通过 Docker 部署 Milvus 服务）
+milvus_uri: "http://localhost:19530"
+
+# Milvus gRPC 连接池大小（每个 API 进程各自持有），默认值 1 在高并发下会成为瓶颈。
+# 检索并发上不去时可继续调大；多 worker 部署时总量为 workers × 本值。
+pool_size: 50
+
+chunk_size: 500
+chunk_overlap: 50
+separators: ["\n\n", "\n", "? ", "! ", "。", "？", "！", "; ", "；", ": ", "：", " ", ""]
+#". "
+
+k: 3
+
+knowledge_dir: knowledge
+allowed_types: [".txt",".pdf",".docx"]
+
+# 索引健康自检间隔（小时）：后台定时检查 md5.txt / knowledge 目录 / Milvus 三者一致性
+health_check_interval_hours: 6
+# 索引自愈：自检发现问题时自动执行修复并复查，直至通过
+# 单轮自愈最多执行修复的次数（防止异常情况下自愈循环不终止）
+health_auto_repair_max_rounds: 3

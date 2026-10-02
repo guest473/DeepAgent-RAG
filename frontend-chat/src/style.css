@@ -1,0 +1,118 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ===== 纸墨设计令牌 =====
+   纸：暖色底 #f6f3ec，surface 略亮
+   墨：近黑 #211f1a 与两级灰
+   朱：印章朱砂 #b4402a，仅用于点睛 */
+:root {
+  --paper: #f6f3ec;
+  --paper-deep: #ede8de;
+  --paper-deeper: #e5dfd2;
+  --surface: #fdfbf6;
+  --ink: #211f1a;
+  --ink-2: #6e6859;
+  --ink-3: #a49d8d;
+  --line: #e3dccd;
+  --line-strong: #d2cab8;
+  --vermilion: #b4402a;
+  --vermilion-deep: #96351f;
+  --sage-bg: #e9f5ee;
+  --sage-border: #b5ddc7;
+  --sage: #127a50;
+  --terra-bg: #fbeae4;
+  --terra-border: #f0b9a8;
+  --terra: #bd2a1a;
+  --code-bg: #24211b;
+  --code-text: #ece5d3;
+  --code-inline-bg: #f0eade;
+  --radius: 8px;
+  --font-display: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--paper);
+  color: var(--ink);
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 纸面颗粒：极淡噪点叠层 */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+  opacity: 0.04;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+}
+
+#app {
+  height: 100vh;
+  overflow: hidden;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+  border: none;
+  outline: none;
+  background: none;
+}
+
+input,
+textarea {
+  font-family: inherit;
+  outline: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--vermilion);
+  outline-offset: 1px;
+}
+
+::placeholder {
+  color: var(--ink-3);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+}
+
+::selection {
+  background: var(--ink);
+  color: var(--paper);
+}
